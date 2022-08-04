@@ -8,10 +8,7 @@ from itertools import combinations
 import numpy as np
 import cv2
 from datetime import datetime
-import threading
-import random
-import wexpect
-import time
+from ADBManager import ADBManager
 
 
 def main(cfg):
@@ -44,10 +41,6 @@ def main(cfg):
     
     def onKeyPress(event):
         nonlocal save_img
-        # print(event)
-        if event.char in 'rR':
-            cfg = load_cfg()
-            gm.set_config(cfg)
         if event.char in 'sS':
             save_img = True
 
@@ -62,7 +55,10 @@ def main(cfg):
         return value
 
     root.bind('<KeyPress>', onKeyPress)
+    
+    adb = ADBManager(cfg)
 
+    
     with mss.mss() as m:
         def capture_stream():
             nonlocal save_img
@@ -83,7 +79,7 @@ def main(cfg):
                 if save_img:
                     now = datetime.now()
                     date_time = now.strftime("./%H-%M-%S")
-                    Image.fromarray(img[:, :, 2]).save(date_time + ".png")
+                    pil_img.save(date_time + ".png")
                     save_img = False
                 
                 if scale > 0:
@@ -96,10 +92,11 @@ def main(cfg):
 
         capture_stream()
         root.mainloop()
+    adb.stop_loop()
 
 
 def usage():
-    print("AutoArk操作说明:\nS:保存当前截图\nR:重新加载配置" + '-'*8)
+    print("AutoArk操作说明:\nS:保存当前截图\nR:重新加载配置\n" + '-'*8)
 
 
 if __name__ == '__main__':
