@@ -1,6 +1,6 @@
 # coding=utf-8
 
-import wexpect
+from adb_shell.adb_device import AdbDeviceTcp
 import threading
 import queue
 import time
@@ -10,26 +10,25 @@ from util import *
 
 class ADBManager:
     def __init__(self, config):
-        self.adb = './adb/adb.exe'
-        self.device = "/dev/input/event8"
-        pipe = wexpect.spawn(self.adb + ' ' + config['adb_init_cmd'])
-        pipe.expect(['connected', wexpect.EOF])
+        self.config = config
+        self.device = config['adb_device']
         # 链接shell
-        self.shell_pipe = wexpect.spawn(self.adb + ' shell')
+        self.shell_pipe = AdbDeviceTcp(config['adb_ip'], config['adb_port'], default_transport_timeout_s=9.)
+        self.shell_pipe.connect()
         
         self.key_status = {'1': 0}
         # print(self.key_status)
         # 后台shell
-        #self.shell_queue = queue.Queue()
-        self.cmd_list = []
+        self.shell_queue = queue.Queue()
+        # self.cmd_list = []
         # 任务管理
-        self.task_dict = {}
+        self.new_cmd = threading.Event()
         self.shell_thre = threading.Thread(target=self._adb_send_loop)
         self.shell_thre.start()
         self.current_key = '1'
         self.current_updown = '-1' # -1无定义 0UP 1DOWN
-        self.last_events = 0
         
+
 
     def stop_loop(self):
         self.release_all_keys()
@@ -38,55 +37,26 @@ class ADBManager:
 
     def release_all_keys(self):
         for i in self.key_status:
-            self.send_release_event(i)
-    
-
-    def set_key_status(self, actions):
-        for action in actions:
-            if action == 0:
-                continue
-            idx = abs(action) - 1
-            code = self.key_config[idx]['code']
-            if action > 0:
-                self.send_press_event(code)
-            else:
-                self.send_release_event(code)
-
-    def get_key_status(self):
-        return self.key_status
-    
-    def get_key_status_list(self):
-        return [self.key_status[i] for i in self.key_status]
+            self.send_release_event(code=i)
     
     def _adb_send_loop(self):
-        c = 0
-        to_del = []
         while True:
+            self.new_cmd.wait()
             # check
-            check_time = time.perf_counter()
-            count = len(self.cmd_list)
-            if count:
-                cmd = '\n'.join(self.cmd_list)
-                # print(cmd)
-                # print('---==%05d==---' % c)
-                c += 1
-                self.shell_pipe.sendline(cmd)
-                if 'exit' in self.cmd_list:
-                    break
-                
-                
-                self.cmd_list = []
-                pass_time = time.perf_counter() - check_time
-                # print("%d - %d - %0.4f" % (last_events, count, pass_time))
-            else:
-                time.sleep(0.0001)
-            self.last_events = count
+            cmds = []
+            while not self.shell_queue.empty():
+                cmds.append(self.shell_queue.get())
+            self.new_cmd.clear()    
+            self.shell_pipe.shell('\n'.join(cmds))
+            if 'exit' in cmds:
+                break
+            
         # print('loop_done')
     
     def _adb_send_cmd(self, cmd):
-        # print(cmd)
-        # self.shell_queue.put(cmd)
-        self.cmd_list.append(' '.join(cmd))
+        self.shell_queue.put(' '.join(cmd))
+        self.new_cmd.set()
+        
         # print(self.shell_pipe.readline())
     
     def _adb_send_event(self, param):
@@ -115,7 +85,7 @@ class ADBManager:
             self._adb_send_event(['3', '57', '-1' if is_up else self.current_key])
             # step 2.5 if there is xy
             if xy:
-                self._send_position_event(*xy)
+                self._send_position_event(xy[0], xy[1])
             # step3 up/down
             self._send_update_updown(is_up)
             # step4 sync
@@ -123,8 +93,8 @@ class ADBManager:
             # fresh state
             self.key_status[code] = 0 if is_up else 1
         
-    def send_release_event(self, code='1'):
-        self._send_touch_event(code, True)
+    def send_release_event(self, xy=None, code='1'):
+        self._send_touch_event(code, True, xy=xy)
 
     def send_press_event(self, xy=None, code='1'):
         # if xy is None: then repeat the last position
@@ -134,8 +104,8 @@ class ADBManager:
         self._adb_send_event(['3', '53', str(x)])
         self._adb_send_event(['3', '54', str(y)])
         
-    def send_tap_event(self, x, y, duration=0,  code='1'):
-        self.send_press_event(xy=(x, y), code=code)
+    def send_tap_event(self, xy, duration=0,  code='1'):
+        self.send_press_event(xy=xy, code=code)
         if duration > 0:
             time.sleep(duration)
         self.send_release_event()
@@ -147,6 +117,25 @@ class ADBManager:
         # then _send_position_event + _send_syn_event()
         # finally release
         # use adb shell getevent -l to monitor events!
+        
+    def parse_action(self, action):
+        code = '1'
+        def cvt_corr(xy):
+            if not isinstance(xy, tuple):
+                return None
+            if len(xy) != 2:
+                return None
+            x, y = xy
+            return (int(x * self.config["adb_shape"][0]), int(y * self.config["adb_shape"][1]))
+
+        if 'tap' in action:
+            self.send_tap_event(cvt_corr(action['tap']), code="1")
+            
+        elif 'release' in action:
+            self.send_release_event(cvt_corr(action['release']), code=code)
+            
+        elif 'press' in action:
+            self.send_press_event(cvt_corr(action['press']), code=code)
         
        
 if __name__ == '__main__':

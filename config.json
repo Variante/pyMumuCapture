@@ -6,6 +6,7 @@
 	"match_width": 360,
     "stick": ["left", "top,height"],
     "adb_shape": [2560, 1440],
-    "adb_init_cmd": "connect 127.0.0.1:7555"
+    "adb_ip": "127.0.0.1",
+	"adb_port": 7555
 }
 
